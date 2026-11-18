@@ -1,12 +1,12 @@
 package io.github.custom.lyrictranslator
 
+import android.net.Uri
 import android.os.Looper
 import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit
 object AutoLyricTranslator {
 
     private val translationCache = ConcurrentHashMap<String, String>()
+    private val inFlight = ConcurrentHashMap.newKeySet<String>()
     private val executor = Executors.newCachedThreadPool()
     private val lrcLineRegex = Regex("""^(\[\d{2}:\d{2}(?:\.\d{2,3})?\])(.*)$""")
 
@@ -41,13 +42,21 @@ object AutoLyricTranslator {
                 return Pair(rawJson, false)
             }
 
+            if (!inFlight.add(trackKey)) {
+                return Pair(rawJson, false)
+            }
+
             val future = executor.submit(Callable {
-                val translated = translateLrcBlock(primaryLyric, "ru") ?: ""
-                if (translated.isNotBlank()) {
-                    translationCache.put(trackKey, translated)
-                    XposedBridge.log("LyricAutoTranslator: translated $trackKey (${translated.lines().size} lines)")
+                try {
+                    val translated = translateLrcBlock(primaryLyric, "ru") ?: ""
+                    if (translated.isNotBlank()) {
+                        translationCache.put(trackKey, translated)
+                        XposedBridge.log("LyricAutoTranslator: SUCCESS $trackKey (${translated.lines().size} lines)")
+                    }
+                    translated
+                } finally {
+                    inFlight.remove(trackKey)
                 }
-                translated
             })
 
             val isMainThread = Looper.myLooper() == Looper.getMainLooper()
@@ -97,8 +106,8 @@ object AutoLyricTranslator {
         if (textsToTranslate.isEmpty()) return null
 
         val joinedPayload = textsToTranslate.joinToString("\n")
-        val translatedText = requestGoogleClients5(joinedPayload, targetLang)
-            ?: requestMyMemoryFallback(joinedPayload, targetLang)
+        val translatedText = requestGoogleGtx(joinedPayload, targetLang)
+            ?: requestMyMemory(joinedPayload, targetLang)
             ?: return null
 
         val translatedLines = translatedText.lines()
@@ -113,45 +122,64 @@ object AutoLyricTranslator {
         return resultBuilder.toString().trimEnd()
     }
 
-    private fun requestGoogleClients5(text: String, targetLang: String): String? {
+    private fun requestGoogleGtx(text: String, targetLang: String): String? {
         return try {
-            val encoded = URLEncoder.encode(text, "UTF-8")
-            val urlStr = "https://google.com"
+            val urlStr = Uri.Builder()
+                .scheme("https")
+                .authority("://googleapis.com")
+                .appendPath("translate_a")
+                .appendPath("single")
+                .appendQueryParameter("client", "gtx")
+                .appendQueryParameter("sl", "auto")
+                .appendQueryParameter("tl", targetLang)
+                .appendQueryParameter("dt", "t")
+                .appendQueryParameter("q", text)
+                .build()
+                .toString()
+
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 4000
-                readTimeout = 4000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                connectTimeout = 5000
+                readTimeout = 5000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
             }
 
-            val code = conn.responseCode
-            if (code != 200) {
-                XposedBridge.log("LyricAutoTranslator Google HTTP: $code")
+            if (conn.responseCode != 200) {
+                XposedBridge.log("LyricAutoTranslator Google HTTP: ${conn.responseCode}")
                 return null
             }
 
             val response = conn.inputStream.bufferedReader().use { it.readText() }
             val rootArray = JSONArray(response)
-            val firstItem = rootArray.get(0)
-            if (firstItem is JSONArray) {
-                firstItem.getString(0)
-            } else {
-                firstItem.toString()
+            val sentencesArray = rootArray.getJSONArray(0)
+
+            val sb = StringBuilder()
+            for (i in 0 until sentencesArray.length()) {
+                val segment = sentencesArray.getJSONArray(i)
+                sb.append(segment.getString(0))
             }
+            sb.toString()
         } catch (e: Exception) {
             XposedBridge.log("LyricAutoTranslator Google error: ${e.message}")
             null
         }
     }
 
-    private fun requestMyMemoryFallback(text: String, targetLang: String): String? {
+    private fun requestMyMemory(text: String, targetLang: String): String? {
         return try {
-            val encoded = URLEncoder.encode(text.take(480), "UTF-8")
-            val urlStr = "https://translated.net|$targetLang"
+            val urlStr = Uri.Builder()
+                .scheme("https")
+                .authority("api.mymemory.translated.net")
+                .appendPath("get")
+                .appendQueryParameter("q", text.take(480))
+                .appendQueryParameter("langpair", "en|$targetLang")
+                .build()
+                .toString()
+
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 4000
-                readTimeout = 4000
+                connectTimeout = 5000
+                readTimeout = 5000
             }
 
             if (conn.responseCode != 200) return null
@@ -159,7 +187,7 @@ object AutoLyricTranslator {
             val json = JSONObject(response)
             json.getJSONObject("responseData").getString("translatedText")
         } catch (e: Exception) {
-            XposedBridge.log("LyricAutoTranslator fallback error: ${e.message}")
+            XposedBridge.log("LyricAutoTranslator MyMemory error: ${e.message}")
             null
         }
     }
