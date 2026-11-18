@@ -10,7 +10,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Автоперевод иностранных текстов на русский для ColorOS Live Lyric" />
+            android:value="Auto translate lyrics to Russian for ColorOS Live Lyric" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
