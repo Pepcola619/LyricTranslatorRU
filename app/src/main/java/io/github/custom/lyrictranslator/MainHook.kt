@@ -20,52 +20,58 @@ class MainHook : IXposedHookLoadPackage {
     }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        if (lpparam.packageName != "android") return
+        if (lpparam.packageName != "com.android.systemui" && lpparam.packageName != "android") return
+
+        XposedBridge.log("LyricAutoTranslator: active in ${lpparam.packageName}")
 
         try {
             XposedHelpers.findAndHookMethod(
-                MediaMetadata.Builder::class.java,
-                "putString",
-                String::class.java,
+                MediaMetadata::class.java,
+                "getString",
                 String::class.java,
                 object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
+                    override fun afterHookedMethod(param: MethodHookParam) {
                         val key = param.args.getOrNull(0) as? String ?: return
-                        val value = param.args.getOrNull(1) as? String ?: return
+                        if (key != "lyricInfo") return
 
-                        if (key == "lyricInfo" && value.isNotBlank()) {
-                            val result = AutoLyricTranslator.enrichLyricInfoJson(value)
-                            param.args.set(1, result.first)
-                            hasActiveTranslation = result.second
+                        val rawJson = param.result as? String ?: return
+                        if (rawJson.isBlank()) return
+
+                        val result = AutoLyricTranslator.enrichLyricInfoJson(rawJson)
+                        if (result.second) {
+                            param.result = result.first
+                            hasActiveTranslation = true
+                        } else {
+                            hasActiveTranslation = false
                         }
                     }
                 }
             )
 
             XposedHelpers.findAndHookMethod(
-                PlaybackState.Builder::class.java,
-                "build",
+                PlaybackState::class.java,
+                "getCustomActions",
                 object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
+                    override fun afterHookedMethod(param: MethodHookParam) {
                         if (!hasActiveTranslation) return
-                        val builder = param.thisObject as PlaybackState.Builder
-                        val state = XposedHelpers.getObjectField(builder, "mState") as? PlaybackState
-                        val actions = state?.customActions ?: emptyList()
+                        @Suppress("UNCHECKED_CAST")
+                        val original = (param.result as? List<PlaybackState.CustomAction>) ?: emptyList()
+                        if (original.any { it.action == ACTION_TOGGLE_TRANSLATION }) return
 
-                        val alreadyHasBtn = actions.any { it.action == ACTION_TOGGLE_TRANSLATION }
-                        if (!alreadyHasBtn) {
-                            val customAction = PlaybackState.CustomAction.Builder(
-                                ACTION_TOGGLE_TRANSLATION,
-                                "Translation",
-                                android.R.drawable.ic_menu_sort_alphabetically
-                            ).setExtras(Bundle()).build()
-                            builder.addCustomAction(customAction)
-                        }
+                        val customAction = PlaybackState.CustomAction.Builder(
+                            ACTION_TOGGLE_TRANSLATION,
+                            "Translation",
+                            android.R.drawable.ic_menu_sort_alphabetically
+                        ).setExtras(Bundle()).build()
+
+                        val updated = ArrayList(original)
+                        updated.add(customAction)
+                        param.result = updated
                     }
                 }
             )
         } catch (t: Throwable) {
-            XposedBridge.log("LyricAutoTranslator error: ${t.message}")
+            XposedBridge.log("LyricAutoTranslator hook error: ${t.message}")
         }
     }
 }
