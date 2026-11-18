@@ -14,17 +14,13 @@ class MainHook : IXposedHookLoadPackage {
     companion object {
         private const val ACTION_TOGGLE_TRANSLATION =
             "io.github.andrealtb.lockscreenlyrics.action.TOGGLE_TRANSLATION"
-
-        @Volatile
-        var hasActiveTranslation = false
     }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         if (lpparam.packageName != "com.android.systemui" && lpparam.packageName != "android") return
 
-        XposedBridge.log("LyricAutoTranslator: active in ${lpparam.packageName}")
-
         try {
+            // 1. Перехватываем чтение lyricInfo и добавляем русский перевод
             XposedHelpers.findAndHookMethod(
                 MediaMetadata::class.java,
                 "getString",
@@ -40,20 +36,17 @@ class MainHook : IXposedHookLoadPackage {
                         val result = AutoLyricTranslator.enrichLyricInfoJson(rawJson)
                         if (result.second) {
                             param.result = result.first
-                            hasActiveTranslation = true
-                        } else {
-                            hasActiveTranslation = false
                         }
                     }
                 }
             )
 
+            // 2. Сразу добавляем кнопку переключения перевода на карточку плеера
             XposedHelpers.findAndHookMethod(
                 PlaybackState::class.java,
                 "getCustomActions",
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
-                        if (!hasActiveTranslation) return
                         @Suppress("UNCHECKED_CAST")
                         val original = (param.result as? List<PlaybackState.CustomAction>) ?: emptyList()
                         if (original.any { it.action == ACTION_TOGGLE_TRANSLATION }) return
