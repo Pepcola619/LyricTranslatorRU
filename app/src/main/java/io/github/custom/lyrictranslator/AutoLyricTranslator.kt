@@ -1,15 +1,21 @@
 package io.github.custom.lyrictranslator
 
+import android.os.Looper
+import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 object AutoLyricTranslator {
 
     private val translationCache = ConcurrentHashMap<String, String>()
+    private val executor = Executors.newCachedThreadPool()
     private val lrcLineRegex = Regex("""^(\[\d{2}:\d{2}(?:\.\d{2,3})?\])(.*)$""")
 
     fun enrichLyricInfoJson(rawJson: String): Pair<String, Boolean> {
@@ -26,17 +32,44 @@ object AutoLyricTranslator {
             }
 
             val trackKey = json.optString("trackKey", primaryLyric.hashCode().toString())
-            val translatedLrc = translationCache.getOrPut(trackKey) {
-                translateLrcBlock(primaryLyric, "ru") ?: ""
+            val cached = translationCache.get(trackKey)
+            if (cached != null) {
+                if (cached.isNotBlank()) {
+                    json.put("translationLyric", cached)
+                    return Pair(json.toString(), true)
+                }
+                return Pair(rawJson, false)
             }
 
-            if (translatedLrc.isNotBlank()) {
-                json.put("translationLyric", translatedLrc)
+            val future = executor.submit(Callable {
+                val translated = translateLrcBlock(primaryLyric, "ru") ?: ""
+                if (translated.isNotBlank()) {
+                    translationCache.put(trackKey, translated)
+                    XposedBridge.log("LyricAutoTranslator: translated $trackKey (${translated.lines().size} lines)")
+                }
+                translated
+            })
+
+            // Если запрос идёт не из главного UI-потока, ждём перевод сразу (до 4 сек)
+            val isMainThread = Looper.myLooper() == Looper.getMainLooper()
+            val resultText = if (!isMainThread) {
+                try {
+                    future.get(4, TimeUnit.SECONDS)
+                } catch (_: Exception) {
+                    ""
+                }
+            } else {
+                ""
+            }
+
+            if (resultText.isNotBlank()) {
+                json.put("translationLyric", resultText)
                 Pair(json.toString(), true)
             } else {
                 Pair(rawJson, false)
             }
         } catch (e: Exception) {
+            XposedBridge.log("LyricAutoTranslator error: ${e.message}")
             Pair(rawJson, false)
         }
     }
@@ -84,12 +117,16 @@ object AutoLyricTranslator {
             val urlStr = "https://googleapis.com"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 4000
+                readTimeout = 4000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
             }
 
-            if (conn.responseCode != 200) return null
+            val code = conn.responseCode
+            if (code != 200) {
+                XposedBridge.log("LyricAutoTranslator HTTP: $code")
+                return null
+            }
 
             val response = conn.inputStream.bufferedReader().use { it.readText() }
             val rootArray = JSONArray(response)
@@ -102,6 +139,7 @@ object AutoLyricTranslator {
             }
             sb.toString()
         } catch (e: Exception) {
+            XposedBridge.log("LyricAutoTranslator net error: ${e.message}")
             null
         }
     }
