@@ -19,6 +19,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Generate valid AndroidManifest.xml
+        run: |
+          python3 -c '
+          ns = "android:"
+          xml = f"""<?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://android.com">
+              <uses-permission {ns}name="android.permission.INTERNET" />
+              <application {ns}label="Lyric Auto Translator (RU)" {ns}hasCode="true">
+                  <meta-data {ns}name="xposedmodule" {ns}value="true" />
+                  <meta-data {ns}name="xposeddescription" {ns}value="Auto translate lyrics to Russian" />
+                  <meta-data {ns}name="xposedminversion" {ns}value="93" />
+                  <meta-data {ns}name="xposedscope" {ns}resource="@array/xposed_scope" />
+              </application>
+          </manifest>"""
+          open("app/src/main/AndroidManifest.xml", "w").write(xml)
+          '
+
       - name: Accept Android SDK Licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
