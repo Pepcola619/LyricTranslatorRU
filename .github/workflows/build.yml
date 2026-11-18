@@ -1,3 +1,4 @@
+yaml
 name: Build Xposed APK
 
 on:
@@ -19,11 +20,12 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Generate valid AndroidManifest.xml
+      - name: Prepare Manifest and Xposed Compile JAR
         run: |
           python3 -c '
+          import os, subprocess
           ns = "andro" + "id:"
-          uri = "http://schemas." + "android.com/apk/res/android"
+          uri = "http://schemas." + "://android.com"
           xml = f"""<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="{uri}">
               <uses-permission {ns}name="android.permission.INTERNET" />
@@ -35,6 +37,54 @@ jobs:
               </application>
           </manifest>"""
           open("app/src/main/AndroidManifest.xml", "w").write(xml)
+
+          os.makedirs("tmp_stub/de/robv/android/xposed/callbacks", exist_ok=True)
+          open("tmp_stub/de/robv/android/xposed/callbacks/XC_LoadPackage.java", "w").write("""
+          package de.robv.android.xposed.callbacks;
+          public abstract class XC_LoadPackage {
+              public static final class LoadPackageParam {
+                  public String packageName;
+                  public ClassLoader classLoader;
+              }
+          }""")
+          open("tmp_stub/de/robv/android/xposed/IXposedHookLoadPackage.java", "w").write("""
+          package de.robv.android.xposed;
+          import de.robv.android.xposed.callbacks.XC_LoadPackage;
+          public interface IXposedHookLoadPackage {
+              void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable;
+          }""")
+          open("tmp_stub/de/robv/android/xposed/XC_MethodHook.java", "w").write("""
+          package de.robv.android.xposed;
+          import java.lang.reflect.Member;
+          public abstract class XC_MethodHook {
+              public static class MethodHookParam {
+                  public Member method;
+                  public Object thisObject;
+                  public Object[] args;
+              }
+              protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
+              protected void afterHookedMethod(MethodHookParam param) throws Throwable {}
+              public class Unhook {}
+          }""")
+          open("tmp_stub/de/robv/android/xposed/XposedBridge.java", "w").write("""
+          package de.robv.android.xposed;
+          public final class XposedBridge {
+              public static void log(String text) {}
+              public static void log(Throwable t) {}
+          }""")
+          open("tmp_stub/de/robv/android/xposed/XposedHelpers.java", "w").write("""
+          package de.robv.android.xposed;
+          public final class XposedHelpers {
+              public static XC_MethodHook.Unhook findAndHookMethod(Class<?> clazz, String methodName, Object... args) { return null; }
+              public static Object getObjectField(Object obj, String fieldName) { return null; }
+          }""")
+          os.makedirs("app/libs", exist_ok=True)
+          subprocess.run("javac -d tmp_stub/out $(find tmp_stub -name \"*.java\")", shell=True, check=True)
+          subprocess.run("jar cf app/libs/xposed-api.jar -C tmp_stub/out .", shell=True, check=True)
+
+          gradle_file = open("app/build.gradle.kts").read()
+          gradle_file = gradle_file.replace("compileOnly(\"de.robv.android.xposed:api:82\")", "compileOnly(files(\"libs/xposed-api.jar\"))")
+          open("app/build.gradle.kts", "w").write(gradle_file)
           '
 
       - name: Accept Android SDK Licenses
