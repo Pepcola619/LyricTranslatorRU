@@ -1,4 +1,3 @@
-yaml
 name: Build Xposed APK
 
 on:
@@ -25,7 +24,7 @@ jobs:
           python3 -c '
           import os, subprocess
           ns = "andro" + "id:"
-          uri = "http://schemas." + "://android.com"
+          uri = "http://schemas." + "android.com/apk/res/android"
           xml = f"""<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="{uri}">
               <uses-permission {ns}name="android.permission.INTERNET" />
@@ -79,7 +78,7 @@ jobs:
               public static Object getObjectField(Object obj, String fieldName) { return null; }
           }""")
           os.makedirs("app/libs", exist_ok=True)
-          subprocess.run("javac -d tmp_stub/out $(find tmp_stub -name \"*.java\")", shell=True, check=True)
+          subprocess.run("javac -d tmp_stub/out $(find tmp_stub -name "*.java")", shell=True, check=True)
           subprocess.run("jar cf app/libs/xposed-api.jar -C tmp_stub/out .", shell=True, check=True)
 
           gradle_file = open("app/build.gradle.kts").read()
