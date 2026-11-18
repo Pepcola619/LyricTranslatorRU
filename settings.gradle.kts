@@ -10,6 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://aliyun.com")
     }
 }
 rootProject.name = "LyricTranslatorRU"
