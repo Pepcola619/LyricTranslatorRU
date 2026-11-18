@@ -50,11 +50,10 @@ object AutoLyricTranslator {
                 translated
             })
 
-            // Если запрос идёт не из главного UI-потока, ждём перевод сразу (до 4 сек)
             val isMainThread = Looper.myLooper() == Looper.getMainLooper()
             val resultText = if (!isMainThread) {
                 try {
-                    future.get(4, TimeUnit.SECONDS)
+                    future.get(5, TimeUnit.SECONDS)
                 } catch (_: Exception) {
                     ""
                 }
@@ -98,7 +97,10 @@ object AutoLyricTranslator {
         if (textsToTranslate.isEmpty()) return null
 
         val joinedPayload = textsToTranslate.joinToString("\n")
-        val translatedText = requestGoogleTranslate(joinedPayload, targetLang) ?: return null
+        val translatedText = requestGoogleClients5(joinedPayload, targetLang)
+            ?: requestMyMemoryFallback(joinedPayload, targetLang)
+            ?: return null
+
         val translatedLines = translatedText.lines()
 
         val resultBuilder = StringBuilder()
@@ -111,35 +113,53 @@ object AutoLyricTranslator {
         return resultBuilder.toString().trimEnd()
     }
 
-    private fun requestGoogleTranslate(text: String, targetLang: String): String? {
+    private fun requestGoogleClients5(text: String, targetLang: String): String? {
         return try {
             val encoded = URLEncoder.encode(text, "UTF-8")
-            val urlStr = "https://googleapis.com"
+            val urlStr = "https://google.com"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 4000
                 readTimeout = 4000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             }
 
             val code = conn.responseCode
             if (code != 200) {
-                XposedBridge.log("LyricAutoTranslator HTTP: $code")
+                XposedBridge.log("LyricAutoTranslator Google HTTP: $code")
                 return null
             }
 
             val response = conn.inputStream.bufferedReader().use { it.readText() }
             val rootArray = JSONArray(response)
-            val sentencesArray = rootArray.getJSONArray(0)
-
-            val sb = StringBuilder()
-            for (i in 0 until sentencesArray.length()) {
-                val segment = sentencesArray.getJSONArray(i)
-                sb.append(segment.getString(0))
+            val firstItem = rootArray.get(0)
+            if (firstItem is JSONArray) {
+                firstItem.getString(0)
+            } else {
+                firstItem.toString()
             }
-            sb.toString()
         } catch (e: Exception) {
-            XposedBridge.log("LyricAutoTranslator net error: ${e.message}")
+            XposedBridge.log("LyricAutoTranslator Google error: ${e.message}")
+            null
+        }
+    }
+
+    private fun requestMyMemoryFallback(text: String, targetLang: String): String? {
+        return try {
+            val encoded = URLEncoder.encode(text.take(480), "UTF-8")
+            val urlStr = "https://translated.net|$targetLang"
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 4000
+                readTimeout = 4000
+            }
+
+            if (conn.responseCode != 200) return null
+            val response = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(response)
+            json.getJSONObject("responseData").getString("translatedText")
+        } catch (e: Exception) {
+            XposedBridge.log("LyricAutoTranslator fallback error: ${e.message}")
             null
         }
     }
