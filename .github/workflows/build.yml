@@ -22,9 +22,9 @@ jobs:
       - name: Prepare Manifest and Xposed Compile JAR
         run: |
           python3 -c '
-          import os, subprocess
+          import glob, os, subprocess
           ns = "andro" + "id:"
-          uri = "http://schemas." + "android.com/apk/res/android"
+          uri = "http://schemas." + "://android.com"
           xml = f"""<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="{uri}">
               <uses-permission {ns}name="android.permission.INTERNET" />
@@ -78,12 +78,14 @@ jobs:
               public static Object getObjectField(Object obj, String fieldName) { return null; }
           }""")
           os.makedirs("app/libs", exist_ok=True)
-          subprocess.run("javac -d tmp_stub/out $(find tmp_stub -name "*.java")", shell=True, check=True)
-          subprocess.run("jar cf app/libs/xposed-api.jar -C tmp_stub/out .", shell=True, check=True)
+          java_files = glob.glob("tmp_stub/**/*.java", recursive=True)
+          subprocess.run(["javac", "-d", "tmp_stub/out"] + java_files, check=True)
+          subprocess.run(["jar", "cf", "app/libs/xposed-api.jar", "-C", "tmp_stub/out", "."], check=True)
 
-          gradle_file = open("app/build.gradle.kts").read()
-          gradle_file = gradle_file.replace("compileOnly(\"de.robv.android.xposed:api:82\")", "compileOnly(files(\"libs/xposed-api.jar\"))")
-          open("app/build.gradle.kts", "w").write(gradle_file)
+          q = chr(34)
+          gf = open("app/build.gradle.kts").read()
+          gf = gf.replace(q + "de.robv.android.xposed:api:82" + q, "files(" + q + "libs/xposed-api.jar" + q + ")")
+          open("app/build.gradle.kts", "w").write(gf)
           '
 
       - name: Accept Android SDK Licenses
