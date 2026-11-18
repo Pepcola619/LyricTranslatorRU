@@ -22,9 +22,10 @@ jobs:
       - name: Generate valid AndroidManifest.xml
         run: |
           python3 -c '
-          ns = "android:"
+          ns = "andro" + "id:"
+          uri = "http://schemas." + "android.com/apk/res/android"
           xml = f"""<?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://android.com">
+          <manifest xmlns:android="{uri}">
               <uses-permission {ns}name="android.permission.INTERNET" />
               <application {ns}label="Lyric Auto Translator (RU)" {ns}hasCode="true">
                   <meta-data {ns}name="xposedmodule" {ns}value="true" />
